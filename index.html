@@ -267,6 +267,9 @@ body.locked{overflow:hidden}
 .modal p.sub{font-size:13px; color:var(--ink-soft); margin-bottom:17px; line-height:1.45}
 .modal .fld{margin-bottom:13px}
 .modal .fld label{text-transform:none; letter-spacing:.2px; font-size:12.5px; color:var(--green)}
+.scope-warn{display:none; margin-top:8px; font-size:12px; line-height:1.45; color:#7a5a1e;
+  background:rgba(176,133,53,.1); border-left:3px solid var(--media); border-radius:0 10px 10px 0; padding:9px 11px}
+.scope-warn.show{display:block}
 .modal-actions{display:flex; gap:10px; margin-top:8px}
 .modal-actions button{flex:1; padding:13px}
 @media (min-width:600px){
@@ -402,6 +405,11 @@ body.locked{overflow:hidden}
     <div class="grabber"></div>
     <h3>Registrar correção</h3>
     <p class="sub">O que a IA leu errado e a leitura correta. Isso vira aprendizado para as próximas receitas.</p>
+    <div class="fld">
+      <label>Aprendizado para</label>
+      <select id="apProf" onchange="atualizarEscopoAprend()"><option value="">— Geral (todas as receitas) —</option></select>
+      <div class="scope-warn" id="apScopeWarn">Sem profissional: este aprendizado valerá para <b>todas</b> as receitas. Para ensinar a letra de um profissional específico, selecione-o acima.</div>
+    </div>
     <div class="fld"><label>O que a IA leu (errado)</label><input type="text" id="apErrado" placeholder="Ex.: 'Minoxidii 5%'"></div>
     <div class="fld"><label>Leitura correta</label><input type="text" id="apCerto" placeholder="Ex.: 'Minoxidil 5%'"></div>
     <div class="fld"><label>Observação (opcional)</label><input type="text" id="apObs" placeholder="Ex.: o 'l' final dele parece 'i'"></div>
@@ -453,11 +461,13 @@ async function carregarProfissionais(){
   try{
     const {profissionais}=await api('listarProfissionais');
     const sel=document.getElementById('profSelect');
+    const ap=document.getElementById('apProf');
     sel.innerHTML='<option value="">— Não sei / não cadastrado —</option>';
+    ap.innerHTML='<option value="">— Geral (todas as receitas) —</option>';
     (profissionais||[]).forEach(p=>{
-      const o=document.createElement('option');
-      o.value=p.id; o.textContent=p.nome+(p.especialidade?' · '+p.especialidade:'');
-      sel.appendChild(o);
+      const txt=p.nome+(p.especialidade?' · '+p.especialidade:'');
+      const o=document.createElement('option'); o.value=p.id; o.textContent=txt; sel.appendChild(o);
+      const o2=document.createElement('option'); o2.value=p.id; o2.textContent=txt; ap.appendChild(o2);
     });
   }catch(e){ toast('Não carregou os profissionais: '+e.message,true); }
 }
@@ -615,19 +625,28 @@ function novaLeitura(){
 }
 
 /* Aprendizado */
-function abrirAprendizado(){ document.getElementById('modalAprend').classList.add('show'); }
+function atualizarEscopoAprend(){
+  const vazio=!document.getElementById('apProf').value;
+  document.getElementById('apScopeWarn').classList.toggle('show', vazio);
+}
+function abrirAprendizado(){
+  document.getElementById('apProf').value=document.getElementById('profSelect').value||'';
+  atualizarEscopoAprend();
+  document.getElementById('modalAprend').classList.add('show');
+}
 async function salvarAprendizado(){
   const errado=document.getElementById('apErrado').value.trim();
   const certo=document.getElementById('apCerto').value.trim();
   if(!errado||!certo){ toast('Preencha as duas leituras.',true); return; }
+  const profId=document.getElementById('apProf').value;
   try{
     await api('salvarAprendizado',{
-      profissionalId:document.getElementById('profSelect').value,
+      profissionalId:profId,
       errado, certo, observacao:document.getElementById('apObs').value.trim()
     });
     fecharModais();
     ['apErrado','apCerto','apObs'].forEach(i=>document.getElementById(i).value='');
-    toast('Aprendizado salvo. As próximas leituras vão usar isso.');
+    toast(profId?'Aprendizado salvo para este profissional.':'Aprendizado geral salvo.');
   }catch(e){ toast('Erro ao salvar: '+e.message,true); }
 }
 
