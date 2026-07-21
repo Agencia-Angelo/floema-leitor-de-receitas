@@ -179,6 +179,7 @@ body.locked{overflow:hidden}
 .loader-ring img{position:absolute; inset:0; margin:auto; width:34px; height:34px; object-fit:contain}
 .load-title{font-weight:600; font-size:17px; color:var(--green); letter-spacing:-.2px; margin-bottom:5px}
 .load-sub{font-size:13px; color:var(--ink-soft); min-height:19px; transition:opacity .25s}
+.load-pct{font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; color:var(--green); margin-top:11px; letter-spacing:.5px}
 
 /* ---------- Resultado: tela dedicada (sobe por cima) ---------- */
 #resultado{display:none; position:fixed; inset:0; z-index:120; padding:0;
@@ -424,8 +425,9 @@ body.locked{overflow:hidden}
 <div id="loadingOverlay">
   <div class="load-card">
     <div class="loader-ring"><span class="ring"></span><img id="loaderEmblem" alt=""></div>
-    <div class="load-title">Lendo a receita</div>
+    <div class="load-title" id="loadTitle">Lendo a receita</div>
     <div class="load-sub" id="loadSub">Analisando a imagem…</div>
+    <div class="load-pct" id="loadPct">0%</div>
   </div>
 </div>
 
@@ -474,8 +476,11 @@ async function carregarProfissionais(){
 function abrirCadastro(){ document.getElementById('modalProf').classList.add('show'); }
 function fecharModais(){ document.querySelectorAll('.modal-bg').forEach(m=>m.classList.remove('show')); }
 async function salvarProfissional(){
+  if(enviando) return;
   const nome=document.getElementById('pfNome').value.trim();
   if(!nome){ toast('Informe o nome.',true); return; }
+  enviando=true;
+  startLoading('Cadastrando profissional', ['Salvando os dados…','Atualizando a lista…']);
   try{
     const {id}=await api('cadastrarProfissional',{
       nome,
@@ -483,12 +488,14 @@ async function salvarProfissional(){
       registro:document.getElementById('pfReg').value.trim(),
       padroes:document.getElementById('pfPad').value.trim()
     });
-    fecharModais();
-    ['pfNome','pfEsp','pfReg','pfPad'].forEach(i=>document.getElementById(i).value='');
     await carregarProfissionais();
     document.getElementById('profSelect').value=id;
+    fecharModais();
+    ['pfNome','pfEsp','pfReg','pfPad'].forEach(i=>document.getElementById(i).value='');
+    await stopLoading();
     toast('Profissional cadastrado.');
-  }catch(e){ toast('Erro ao salvar: '+e.message,true); }
+  }catch(e){ await stopLoading(); toast('Erro ao salvar: '+e.message,true); }
+  finally{ enviando=false; }
 }
 
 /* Câmera */
@@ -549,17 +556,32 @@ function refazer(){
 
 /* Leitura */
 const LOAD_MSGS=['Analisando a imagem…','Cruzando com os aprendizados…','Estruturando os medicamentos…','Conferindo os campos…'];
-let loadTimer=null;
-function startLoading(){
+let loadTimer=null, pctTimer=null, pctVal=0, enviando=false;
+
+function setPct(v){ const el=document.getElementById('loadPct'); if(el) el.textContent=Math.round(v)+'%'; }
+function startLoading(title, msgs){
   document.body.classList.add('locked');
   document.getElementById('loadingOverlay').classList.add('show');
-  const sub=document.getElementById('loadSub'); let i=0; sub.textContent=LOAD_MSGS[0];
-  loadTimer=setInterval(()=>{ i=(i+1)%LOAD_MSGS.length; sub.style.opacity=0;
-    setTimeout(()=>{ sub.textContent=LOAD_MSGS[i]; sub.style.opacity=1; },220); },1900);
+  document.getElementById('loadTitle').textContent=title||'Lendo a receita';
+  const list=(msgs&&msgs.length)?msgs:LOAD_MSGS;
+  const sub=document.getElementById('loadSub'); let i=0; sub.textContent=list[0]; sub.style.opacity=1;
+  clearInterval(loadTimer);
+  loadTimer=setInterval(()=>{ i=(i+1)%list.length; sub.style.opacity=0;
+    setTimeout(()=>{ sub.textContent=list[i]; sub.style.opacity=1; },220); },1900);
+  // progresso simulado: sobe rápido e desacelera até ~90%
+  pctVal=0; setPct(0);
+  clearInterval(pctTimer);
+  pctTimer=setInterval(()=>{ pctVal+=Math.max(0.6,(90-pctVal)*0.07); if(pctVal>90)pctVal=90; setPct(pctVal); },150);
 }
 function stopLoading(){
   clearInterval(loadTimer); loadTimer=null;
-  document.getElementById('loadingOverlay').classList.remove('show');
+  clearInterval(pctTimer); pctTimer=null;
+  setPct(100);
+  return new Promise(res=>setTimeout(()=>{
+    document.getElementById('loadingOverlay').classList.remove('show');
+    document.body.classList.remove('locked');
+    res();
+  },300));
 }
 function abrirResultado(){
   const r=document.getElementById('resultado');
@@ -567,9 +589,11 @@ function abrirResultado(){
   const sc=r.querySelector('.result-scroll'); if(sc) sc.scrollTop=0;
 }
 async function lerReceita(){
+  if(enviando) return;
   if(!imagemBase64){ toast('Capture ou envie a foto primeiro.',true); return; }
+  enviando=true;
   document.getElementById('btnLer').disabled=true;
-  startLoading();
+  startLoading('Lendo a receita', LOAD_MSGS);
   try{
     const {dados}=await api('lerReceita',{
       imagemBase64, mediaType,
@@ -577,9 +601,9 @@ async function lerReceita(){
       profissionalId:document.getElementById('profSelect').value
     });
     ultimoResultado=dados; renderResultado(dados);
-    stopLoading(); abrirResultado();
-  }catch(e){ stopLoading(); document.body.classList.remove('locked'); toast('Erro na leitura: '+e.message,true); }
-  finally{ document.getElementById('btnLer').disabled=false; }
+    await stopLoading(); abrirResultado();
+  }catch(e){ await stopLoading(); toast('Erro na leitura: '+e.message,true); }
+  finally{ enviando=false; document.getElementById('btnLer').disabled=false; }
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function renderResultado(d){
@@ -635,10 +659,13 @@ function abrirAprendizado(){
   document.getElementById('modalAprend').classList.add('show');
 }
 async function salvarAprendizado(){
+  if(enviando) return;
   const errado=document.getElementById('apErrado').value.trim();
   const certo=document.getElementById('apCerto').value.trim();
   if(!errado||!certo){ toast('Preencha as duas leituras.',true); return; }
   const profId=document.getElementById('apProf').value;
+  enviando=true;
+  startLoading('Salvando aprendizado', ['Registrando a correção…']);
   try{
     await api('salvarAprendizado',{
       profissionalId:profId,
@@ -646,8 +673,10 @@ async function salvarAprendizado(){
     });
     fecharModais();
     ['apErrado','apCerto','apObs'].forEach(i=>document.getElementById(i).value='');
+    await stopLoading();
     toast(profId?'Aprendizado salvo para este profissional.':'Aprendizado geral salvo.');
-  }catch(e){ toast('Erro ao salvar: '+e.message,true); }
+  }catch(e){ await stopLoading(); toast('Erro ao salvar: '+e.message,true); }
+  finally{ enviando=false; }
 }
 
 document.querySelectorAll('.modal-bg').forEach(m=>{
